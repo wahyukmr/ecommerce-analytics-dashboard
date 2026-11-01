@@ -304,4 +304,3 @@ The Playwright web server sets `VITE_E2E_MODE=true`, which swaps only the test s
 The V8 coverage provider emits text, HTML, and LCOV reports under `coverage/`. A minimum percentage gate is intentionally not guessed before the first trustworthy baseline run; record that baseline, then set a threshold in a separate reviewed change.
 
 **Lockfile sync required for this patch:** Phase 3 adds three exact-version developer tools. The package registry was unreachable from the authoring environment, so `package-lock.json` could not be regenerated here. After applying the patch, run `npm install`, review the lockfile diff, and commit the regenerated `package-lock.json` before running CI or merging. Do not consider the release gate complete while `npm ci` cannot install from the committed lockfile.
-s
