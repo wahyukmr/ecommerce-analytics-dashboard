@@ -1,168 +1,274 @@
-## Master flow (end-to-end)
+# Runtime Flow
 
-Problem -> Model -> Data -> Processing -> API -> UI -> Story -> Generalize
-
-Phase 1 — define system
-
-- Event model (final)
-- Event list
-- User journey
-- Activation: user dianggaap activited jika melakukan `feature_used` minimal 1x
-- Dashboard sections: growth, funnel, engagement, feature usage, and retention
-
-Phase 2 — data (event) generator
-Goal: have a realistic data based on real user behavior, reflects the funnel, aand have a time distribution
-
-- Model: input (config-driven)
-- Event generator
-
-Phase 3 — processing engine (Data pipeline) ⭐
-Mental model:
+## 1. Application bootstrap
 
 ```text
-Raw Events
-  ↓
-Filter (date range)
-  ↓
-Processing
-  ↓
-Derived Data
+LocaleProvider
+    ↓
+SyntheticAnalyticsProvider
+    ↓
+useSyntheticAnalytics
+    ↓
+restore IndexedDB state if available
+    ↓
+otherwise start Web Worker generation
 ```
 
-Metrics: Global aggregation without order and without dependencies between events. How much something happens?
-Funnel: To identify at which step the user stops continuing the process (drop-off). How many users successfully passed this step?
-Engagement: To see how active the user is.
-Retention: To indetify whether the user returns.
-Feature analytic: To identify which features are used.
+The dashboard is rendered immediately. Boot status is presented inside the dashboard instead of blocking the entire page behind a full-screen loading state.
 
-Event-based aggregation: Counting how many events occurred. How many activities?
-User-based aggregation: Counting how many unique users that did something. How many people?
-
-Phase 4 — config system ⭐
-Goal: user can be define analytics itself based on config, not hardcode
-
-Mental model:
-
-- Event = data mentah
-- Config = aturan analisis (bisnis user)
-- Engine (pure logic) = yang mengeksekusi aturan
-
-**Hardcoded** logic menggabungkan definisi masalah dan cara penyelesaiannya dalam satu tempat, sehingga sulit diubah dan tidak fleksibel. Sedangkan **config-driven engine** memisahkan definisi analisis (seperti funnel steps) dari engine pemrosesan, sehingga sistem dapat digunakan ulang untuk berbagai kasus tanpa mengubah kode inti.
-
-Config tidak cukup hanya berupa array string karena eventType saja tidak mampu merepresentasikan kondisi bisnis yang lebih kompleks. Dengan menambahkan condition, kita bisa mendefinisikan perilaku user secara lebih spesifik (misalnya berdasarkan feature atau property tertentu), sehingga sistem dapat menangani berbagai skenario analitik secara fleksibel dan akurat.
-
----
-
-Arsitektur sistem (high level)
-🔹 Layer 1 — Data ingestion
-
-Event masuk dari aplikasi
-
-Frontend / Backend → Event collector
-🔹 Layer 2 — Storage
-
-Simpan event (DB / warehouse)
-
-🔹 Layer 3 — Processing
-filter
-aggregate
-compute metric
-🔹 Layer 4 — Query layer
-
-Ambil data sesuai kebutuhan
-
-🔹 Layer 5 — Visualization
-
-Chart, table, dashboard
-
----
-
-✅ Platform ini adalah:
-event-based system
-configurable analytics
-decision-driven
-✅ Core features:
-metrics
-funnel
-engagement
-retention
-feature usage
-✅ Fokus kamu:
-data modeling
-processing logic
-architecture
-
----
-
-Dokumentasi yang kamu butuhkan (WAJIB nanti)
-bagaimana event masuk
-bagaimana event diproses
-bagaimana metric dihitung
-bagaimana user bisa konfigurasi funnel
-Event-driven architecture
-Data pipeline
-Config system
-Trade-off design
-
----
-
-Phase 5 — hooks architecture
-Goal: menghubungkan engine ke UI tanpa merusak desain
+## 2. Synthetic generation
 
 ```text
-hooks/
-  ├── useEvents.ts
-  ├── useFilteredEvents.ts
-  ├── useMetrics.ts
-  ├── useFunnel.ts
-  ├── useEngagement.ts
-  ├── useFeatureUsage.ts
-  ├── useRetention.ts
-  └── useAnalytics.ts (optional orchestrator)
+UserFactory.iterateUsers()
+    ↓
+EventBuilder.generateEventsForUser()
+    ↓
+ChunkEmitter
+    ↓
+worker postMessage()
+    ↓
+WorkerController
 ```
 
-❗ Hook bukan tempat berpikir
-Hook tempat “menghubungkan” (adapter) hasil berpikir (pure logic) ke UI
+Users are generated lazily. Events are emitted into chunks rather than collecting the entire generated dataset in one temporary array.
 
-Phase 6 — UI
-Goal: visualization, not logic. Every section take the data itself not depandent on each other
+## 3. Worker backpressure
 
 ```text
+Worker
+  ↓
+Chunk
+  ↓
+Main thread
+  ↓
+ChunkProcessor
+  ↓
+AnalyticsEngine
+  ↓
+ACK
+  ↓
+Worker continues
+```
+
+The worker is prevented from outrunning the main-thread ingestion path.
+
+Each generation receives a run ID. Responses from older or terminated runs are ignored.
+
+## 4. Event ingestion
+
+```text
+RawEvent
+    ↓
+RawEventNormalizer
+    ↓
+AnalyticsEngine.append()
+    ├── EventRepository.append()
+    ├── EventIndexer.append()
+    └── ProjectionRegistry.append()
+            ├── UserProjection
+            ├── PurchaseProjection
+            ├── RevenueProjection
+            ├── FunnelProjection
+            ├── SessionProjection
+            └── ProductProjection
+                    ↓
+             AnalyticsState
+```
+
+Every projection updates its owned analytical facts incrementally.
+
+## 5. Read model publication
+
+After a successful engine append:
+
+```text
+AnalyticsState mutated
+      ↓
+revision increment
+      ↓
+new AnalyticsReadModel object
+      ↓
+subscribers notified
+```
+
+The read model is a React-facing read handle, not a persistence snapshot.
+
+## 6. Progressive dashboard
+
+While synthetic generation is active:
+
+```text
+AnalyticsState
+    ↓
+maintained aggregates
+    ↓
+AnalyticsReadModel
+    ↓
+useSyncExternalStore
+    ↓
+buildProgressiveDashboardData()
+    ↓
+Dashboard sections update
+```
+
+The progressive path does not execute the raw-event `QueryEngine` path. It consumes:
+
+```text
+progressive summary
+revenue by day
+active users by day
+purchase cohorts
+product aggregates
+```
+
+Therefore the dashboard can visually follow the growing event stream without repeatedly rescanning all accumulated events.
+
+## 7. Progressive sections
+
+The following sections are backed by incremental state during generation:
+
+```text
+Metrics
+Revenue Trend
+Engagement
+Funnel
+Product Performance
+Retention
+```
+
+Examples:
+
+```text
+payment_success
+    ↓
+RevenueProjection
+    ↓
+totalRevenue += amount
+revenueByDay[day] += amount
+```
+
+```text
+product_view
+    ↓
+ProductProjection
+    ↓
+product.views += 1
+product.uniqueViewers.add(userId)
+```
+
+```text
+payment_success
+    ↓
+PurchaseProjection
+    ↓
+purchase count / cohort / retention windows update
+```
+
+## 8. Final filtered dashboard
+
+When preparation completes:
+
+```text
+Dashboard filters
+    ↓
+resolveDashboardDateRange()
+    ↓
+QueryEngine + maintained aggregates
+    ↓
+buildDashboardData()
+    ↓
+Dashboard sections
+```
+
+The final path exists because date/plan/category filters are scoped read-side concerns and some multidimensional calculations are not identical to cumulative aggregates.
+
+## 9. Query path
+
+`QueryEngine` can combine:
+
+```text
+byDay
+byUser
+byEventType
+byPlan
+byCategory
+byProduct
+```
+
+The smallest candidate index sets are intersected first. Exact timestamp checks are still applied after index selection.
+
+Timestamp ordering is opt-in:
+
+```text
+orderBy: "timestamp"
+```
+
+Queries that do not require chronological ordering are not sorted unnecessarily.
+
+## 10. Persistence
+
+During ingestion:
+
+```text
+AnalyticsEngine.append()
+    ↓
+AnalyticsState updated
+    ↓
+normalized events queued for persistence
+```
+
+After generation reaches a successful completion:
+
+```text
+flush event persistence
+    ↓
+whole-engine checkpoint
+    ↓
+IndexedDB
+```
+
+## 11. Recovery
+
+```text
+Application start
+    ↓
+IndexedDB
+    ↓
+load checkpoint
+    ↓
+restore state
+    ↓
+load event log
+    ↓
+rebuild event indexes
+    ↓
+rebuild required projection working state
+    ↓
+replay events after checkpoint
+    ↓
+publish read model
+    ↓
 Dashboard
- ├── GrowthSection
- ├── FunnelSection
- ├── EngagementSection
- ├── FeatureSection
- └── RetentionSection
 ```
 
-cara berpikir PM:
+If a persisted event log exists without a valid checkpoint, the incomplete dataset is cleared instead of being treated as recoverable state.
 
-- apakah produk tumbuh? -> growth overview
-- kalau tidak, user drop di mana? -> funnel
-- user aktif (pakai produk atau tidak)? -> engagement
-- fitur mana yang penting? -> feature usage
-- user balik atau tidak? -> retention
+## 12. Reset / dataset change
 
-Phase 7 — interaction system
-Goal: real dashboard
+```text
+User selects another dataset
+    ↓
+current generation aborted
+    ↓
+old worker terminated
+    ↓
+old run responses ignored
+    ↓
+AnalyticsEngine.reset()
+    ↓
+new dataset key
+    ↓
+restore or generate
+```
 
-State:
-date range (global)
-funnel config (semi-global)
-sorting (local)
-chart mode (local)
-
-Phase 8 — validation
-Goal: Ensure that the result is make sanse, if any problems / not make sense -> problem in the generator data / processing
-
-Phase 9 — docs
-Goal: Can be exlaination of event-driven architecture, data pipeline, config system, and trade-off design
-
-Phase 10 — generalization
-Goal: make reusability
-
-add:
-dynamic event type
-dynamic funnel config
-plugin system (opsional)
+This prevents stale asynchronous work from one dataset from contaminating another dataset.
