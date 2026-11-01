@@ -1,0 +1,1 @@
+export { useSyntheticAnalytics } from "./useSyntheticAnalytics";

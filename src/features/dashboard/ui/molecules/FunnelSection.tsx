@@ -1,96 +1,188 @@
-import React from "react";
-import type { FunnelResult } from "../../derived/types";
+import { memo, useMemo } from "react";
+import type { FunnelData } from "../../application/types";
+import { useLocale } from "../../../../context";
+import { formatNumber, formatPercent } from "../../../../libs";
+import FunnelStepCard from "./FunnelStepCard";
+import SupportingSignalCard from "./SupportingSignalCard";
+import SectionHeader from "./SectionHeader";
+import { EmptyState, Icon } from "../atoms";
 
-function humanizeStep(step: string) {
-  return step.charAt(0).toUpperCase() + step.slice(1).replaceAll("_", " ");
-}
-
-function FunnelStepRow({
-  totalBase,
-  step,
+function FunnelSection({
+  data,
 }: {
-  totalBase: number;
-  step: FunnelResult["steps"][number];
-}) {
-  const width =
-    totalBase > 0 ? Math.max(6, (step.usersAtStep / totalBase) * 100) : 0;
+  readonly data: FunnelData;
+}): React.JSX.Element {
+  const { workspaceLocale } = useLocale();
+  const base = data.steps[0]?.usersAtStep ?? 0;
+  const purchase = data.steps.at(-1)?.usersAtStep ?? 0;
+  const finalRate = base > 0 ? purchase / base : 0;
+
+  const biggestDropOff = useMemo(
+    () =>
+      data.steps
+        .slice(1)
+        .reduce<FunnelData["steps"][number] | null>((current, step) => {
+          if (!current) return step;
+          return step.dropOffFromPrevious > current.dropOffFromPrevious
+            ? step
+            : current;
+        }, null),
+    [data.steps],
+  );
+
+  const hasData = data.steps.some((step) => step.usersAtStep > 0);
 
   return (
-    <div className="flex items-center gap-4 py-2">
-      <div className="w-48">
-        <div className="text-sm font-medium text-neutral-200">
-          {humanizeStep(step.step)}
-        </div>
-        <div className="text-xs text-neutral-500">
-          {step.usersAtStep} {step.usersAtStep > 1 ? "users" : "user"}
-        </div>
-      </div>
+    <section
+      id="journey"
+      className="section-anchor space-y-4"
+      aria-labelledby="funnel-heading"
+    >
+      <SectionHeader
+        id="funnel-heading"
+        kicker="03 · Customer journey"
+        title="Purchase funnel"
+        description="A milestone-based view of the path from product interest to completed payment. Event timestamp order is not required, but each milestone depends on the previous milestone being present."
+        action={
+          <span className="status-pill">
+            <span className="status-dot" aria-hidden="true" />
+            Milestone model
+          </span>
+        }
+      />
 
-      <div className="flex-1">
-        <div className="bg-neutral-800 h-4 rounded overflow-hidden">
-          <div
-            className="h-4 rounded"
-            style={{
-              width: `${width}%`,
-              background: `linear-gradient(90deg,#3b82f6,#06b6d4)`,
-            }}
+      {!hasData ? (
+        <div className="surface p-4 sm:p-5">
+          <EmptyState
+            icon="layers"
+            title="There is no funnel activity in this scope"
+            description="The selected filters do not contain enough customer journey activity to populate the funnel."
+            hint="Broaden the date range or choose All plans / All categories."
           />
         </div>
-      </div>
-
-      <div className="w-44 text-right">
-        <div className="text-sm text-neutral-300">
-          {step.conversionRateFromPrevious.toFixed(1)}%
-        </div>
-        <div className="text-xs text-neutral-500">
-          drop {step.dropOffFromPrevious}
-        </div>
-      </div>
-    </div>
-  );
-}
-
-export function FunnelSection({
-  funnelData,
-}: {
-  funnelData: FunnelResult;
-}): React.JSX.Element {
-  const base = funnelData.steps[0]?.usersAtStep ?? 0;
-  console.log("funnel component rendered");
-
-  return (
-    <section className="p-6 rounded-xl bg-neutral-900 mt-6">
-      <div className="flex items-center justify-between mb-4">
-        <h2 className="text-lg font-semibold">Conversion Funnel</h2>
-        <div className="text-sm text-neutral-400">
-          Total steps: {funnelData.steps.length}
-        </div>
-      </div>
-
-      <div className="space-y-3">
-        {funnelData.steps.map((s) => (
-          <FunnelStepRow key={s.step} totalBase={base} step={s} />
-        ))}
-      </div>
-
-      {funnelData.dropOffDetails.length > 0 && (
-        <div className="mt-6 text-sm text-neutral-400">
-          <div className="font-medium text-neutral-200 mb-2">
-            Drop-off details
+      ) : (
+        <div className="surface p-3 sm:p-4 lg:p-5">
+          <div className="grid gap-3 sm:grid-cols-3">
+            <FunnelSummary
+              label="Starting customers"
+              value={formatNumber(base, workspaceLocale)}
+            />
+            <FunnelSummary
+              label="Purchasers"
+              value={formatNumber(purchase, workspaceLocale)}
+            />
+            <FunnelSummary
+              label="Final conversion"
+              value={formatPercent(finalRate, workspaceLocale)}
+              highlighted
+            />
           </div>
-          <ul className="space-y-1">
-            {funnelData.dropOffDetails.map((d) => (
-              <li key={d.step} className="flex items-center gap-2">
-                <span className="w-2 h-2 rounded-full bg-amber-500/80" />
-                <span className="text-neutral-300">{humanizeStep(d.step)}</span>
-                <span className="ml-auto text-xs text-neutral-500">
-                  {d.users.length} {d.users.length > 1 ? "users" : "user"}
-                </span>
-              </li>
+
+          <div className="mt-4 space-y-3">
+            {data.steps.map((step, index) => (
+              <FunnelStepCard
+                key={step.step}
+                index={index}
+                totalBase={base}
+                step={step}
+                isLast={index === data.steps.length - 1}
+              />
             ))}
-          </ul>
+          </div>
+
+          <div className="mt-4 grid gap-3 xl:grid-cols-[minmax(0,1fr)_minmax(18rem,0.62fr)]">
+            <div className="dashboard-surface-quiet rounded-xl p-4">
+              <div className="flex items-start gap-3">
+                <span
+                  className="inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-info/10 text-info"
+                  aria-hidden="true"
+                >
+                  <Icon name="spark" size={16} />
+                </span>
+                <div>
+                  <h3 className="text-sm font-semibold text-text-primary">
+                    Supporting signals
+                  </h3>
+                  <p className="mt-1 text-xs leading-5 text-muted-foreground">
+                    Interest and payment-friction signals that help explain the
+                    journey without becoming mandatory funnel steps.
+                  </p>
+                </div>
+              </div>
+              <div className="mt-4 grid gap-3 md:grid-cols-2">
+                {data.supportingSignals.map((signal) => (
+                  <SupportingSignalCard key={signal.label} signal={signal} />
+                ))}
+              </div>
+            </div>
+
+            {biggestDropOff && biggestDropOff.dropOffFromPrevious > 0 ? (
+              <aside
+                className="rounded-xl border border-warning/20 bg-warning/4.5 p-4"
+                aria-label="Largest funnel drop-off"
+              >
+                <div className="flex items-start gap-3">
+                  <span
+                    className="inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-warning/10 text-warning"
+                    aria-hidden="true"
+                  >
+                    <Icon name="trend-down" size={16} />
+                  </span>
+                  <div>
+                    <p className="control-label text-warning">
+                      Largest leakage
+                    </p>
+                    <h3 className="mt-1 text-sm font-semibold text-text-primary">
+                      {biggestDropOff.step}
+                    </h3>
+                  </div>
+                </div>
+                <p className="mt-4 text-sm leading-6 text-text-secondary">
+                  {formatNumber(
+                    biggestDropOff.dropOffFromPrevious,
+                    workspaceLocale,
+                  )}{" "}
+                  customers did not continue from the previous milestone.
+                </p>
+                <div className="mt-4 flex items-center justify-between border-t border-warning/15 pt-3 text-xs">
+                  <span className="text-muted-foreground">Step drop-off</span>
+                  <span className="font-semibold tabular-nums text-warning">
+                    {formatPercent(
+                      biggestDropOff.dropOffRateFromPrevious,
+                      workspaceLocale,
+                    )}
+                  </span>
+                </div>
+              </aside>
+            ) : null}
+          </div>
         </div>
       )}
     </section>
   );
 }
+
+function FunnelSummary({
+  label,
+  value,
+  highlighted = false,
+}: {
+  readonly label: string;
+  readonly value: string;
+  readonly highlighted?: boolean;
+}): React.JSX.Element {
+  return (
+    <div
+      className={`rounded-xl border px-4 py-3 ${highlighted ? "border-success/20 bg-success/4.5" : "border-border bg-white/[0.018]"}`}
+    >
+      <p className="metric-label">{label}</p>
+      <p
+        className={`mt-1 text-xl font-semibold tracking-tight tabular-nums ${highlighted ? "text-success" : "text-text-primary"}`}
+      >
+        {value}
+      </p>
+    </div>
+  );
+}
+
+export default memo(FunnelSection);
