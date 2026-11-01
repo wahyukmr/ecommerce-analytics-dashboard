@@ -45,7 +45,7 @@
     "eslint-plugin-react-dom": "^5.28.8",
     "eslint-plugin-react-hooks": "^7.0.1",
     "eslint-plugin-react-refresh": "^0.5.7",
-    "eslint-plugin-react-x": "^2.13.0",
+    "eslint-plugin-react-x": "^5.28.8",
     "eslint-plugin-unused-imports": "^4.4.1",
     "globals": "^16.5.0",
     "jsdom": "^29.1.1",
